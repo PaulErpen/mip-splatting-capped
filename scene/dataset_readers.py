@@ -220,7 +220,7 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             
     return cam_infos
 
-def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
+def readNerfSyntheticInfo(path, white_background, eval, extension=".png", n_start_gaussians=None):
     print("Reading Training Transforms")
     train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension)
     print("Reading Test Transforms")
@@ -248,6 +248,12 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
         pcd = fetchPly(ply_path)
     except:
         pcd = None
+    
+    if n_start_gaussians is not None and pcd is not None:
+        print("Subsampling point cloud")
+        np.random.seed(123)
+        chosen_points = np.random.choice(pcd.points.shape[0], n_start_gaussians, replace=False)
+        pcd = BasicPointCloud(pcd.points[chosen_points], pcd.colors[chosen_points], pcd.normals[chosen_points])
 
     scene_info = SceneInfo(point_cloud=pcd,
                            train_cameras=train_cam_infos,
