@@ -16,6 +16,7 @@ import cv2
 import torch
 import random
 from random import randint
+from early_stopping import EarlyStoppingHandler, parse_grace_periods
 from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
@@ -53,7 +54,7 @@ def create_offset_gt(image, offset):
     image = torch.nn.functional.grid_sample(image[None], id_coords[None], align_corners=True, padding_mode="border")[0]
     return image
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, num_max):
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, num_max) -> None:
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
@@ -88,6 +89,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     cum_deleted = 0
     cum_created = 0
+
+    early_stopping_handler = EarlyStoppingHandler(
+        use_early_stopping=args.use_early_stopping,
+        start_early_stopping_iteration=args.start_early_stopping_iteration,
+        grace_periods=parse_grace_periods(args.early_stopping_grace_periods),
+        early_stopping_check_interval=len(scene.getTrainCameras()),
+        n_patience_epochs=args.n_patience_epochs
+    )
 
     for iteration in range(first_iter, opt.iterations + 1):        
         if network_gui.conn == None:
@@ -170,6 +179,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 }, step=iteration)
             
             n_created, n_deleted = 0, 0
+
+            if early_stopping_handler.stop_early(
+                step=iteration,
+                test_cameras=scene.getTestCameras(),
+                render_func=lambda camera: render_imp(camera, scene.gaussians, pipe, background)["render"],
+                save_best=lambda: scene.save(iteration)
+            ):
+                scene.save(iteration)
+                break
 
             # Densification
             if iteration < opt.densify_until_iter:
@@ -321,6 +339,11 @@ if __name__ == "__main__":
     parser.add_argument("--wandb_key", type=str, default="", help="The key used to sign into weights & biases logging")
     parser.add_argument("--wandb_project", type=str, default="")
     parser.add_argument("--wandb_run_name", type=str, default=None)
+
+    parser.add_argument("--use_early_stopping", default=False, action="store_true")
+    parser.add_argument("--early_stopping_grace_periods", type=str)
+    parser.add_argument("--start_early_stopping_iteration", type=int)
+    parser.add_argument("--n_patience_epochs", type=int, default=3)
 
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
